@@ -1,4 +1,6 @@
-const BASE = import.meta.env.VITE_API_URL || ''
+// 배포 환경변수에 스킴이 빠지거나 끝에 /가 붙어도 동작하게 정리한다.
+const RAW = (import.meta.env.VITE_API_URL || '').trim().replace(/\/+$/, '')
+const BASE = RAW && !/^https?:\/\//.test(RAW) ? `https://${RAW}` : RAW
 
 export const store = {
   get(k) {
