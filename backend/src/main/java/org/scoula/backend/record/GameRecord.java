@@ -25,6 +25,12 @@ public class GameRecord {
 	private Long userId;
 	private LocalDate gameDate;
 	private String opponentCode;
+	/** KBO gameId (예: 20261014OBLG0). 실제 경기와 연결된 기록만 저장된다. */
+	private String gameId;
+	private String awayCode;
+	private String homeCode;
+	private Integer awayScore;
+	private Integer homeScore;
 	/** WIN / LOSE / null */
 	private String result;
 	private String tag;

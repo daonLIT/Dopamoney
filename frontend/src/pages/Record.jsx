@@ -11,11 +11,12 @@ const TAGS = [
 ]
 const EMPTY_COST = { ticket: '', move: '', food: '' }
 
-export default function Record({ myTeamCode }) {
+export default function Record() {
   const [date, setDate] = useState(ymd(new Date()))
-  const [teams, setTeams] = useState([])
-  const [opp, setOpp] = useState('')
-  const [gameHint, setGameHint] = useState('')
+  const [games, setGames] = useState([])
+  const [gamesLoading, setGamesLoading] = useState(true)
+  const [gameErr, setGameErr] = useState('')
+  const [gameId, setGameId] = useState('')
   const [cost, setCost] = useState(EMPTY_COST)
   const [note, setNote] = useState('')
   const [tag, setTag] = useState(null)
@@ -44,35 +45,41 @@ export default function Record({ myTeamCode }) {
 
   useEffect(() => {
     Promise.resolve().then(reload)
-    api('/api/teams')
-      .then(setTeams)
-      .catch((e) => setErr(e.message))
   }, [reload])
 
-  // 선택한 날짜의 내 팀 경기에서 상대 팀 채우기
+  // 선택한 날짜에 실제로 열린 경기 목록 (이 중에서만 고를 수 있다)
   useEffect(() => {
-    if (!date || editId) return
+    if (!date) return
     let alive = true
-    api('/api/schedule?date=' + date)
+    Promise.resolve()
+      .then(() => {
+        setGamesLoading(true)
+        return api('/api/schedule?date=' + date)
+      })
       .then((res) => {
         if (!alive) return
-        const g = res.games.find((x) => x.myTeam)
-        if (g) {
-          const o = g.away.code === myTeamCode ? g.home : g.away
-          setOpp(o.code)
-          setGameHint(`${g.away.name} vs ${g.home.name}`)
-        } else {
-          setOpp('')
-          setGameHint('')
-        }
+        const list = res.games || []
+        setGames(list)
+        setGameErr('')
+        // 이미 고른 경기가 있으면 유지, 없으면 내 팀 경기를 기본 선택
+        setGameId((prev) => {
+          if (list.some((g) => g.gameId === prev && g.status !== 'CANCELED')) return prev
+          return list.find((g) => g.myTeam && g.status !== 'CANCELED')?.gameId || ''
+        })
       })
-      .catch(() => {
-        if (alive) setGameHint('')
+      .catch((e) => {
+        if (!alive) return
+        setGames([])
+        setGameId('')
+        setGameErr(e.message)
+      })
+      .finally(() => {
+        if (alive) setGamesLoading(false)
       })
     return () => {
       alive = false
     }
-  }, [date, myTeamCode, editId])
+  }, [date])
 
   const resetForm = () => {
     setNote('')
@@ -88,13 +95,13 @@ export default function Record({ myTeamCode }) {
       setFormErr('경기 날짜와 감상은 필수예요.')
       return
     }
-    if (!opp) {
-      setFormErr('상대 팀을 선택해주세요.')
+    if (!gameId) {
+      setFormErr('그 날 열린 경기 중에서 선택해주세요.')
       return
     }
     const body = {
       gameDate: date,
-      opponentCode: opp,
+      gameId,
       ticketCost: Number(cost.ticket || 0),
       transportCost: Number(cost.move || 0),
       foodCost: Number(cost.food || 0),
@@ -114,8 +121,7 @@ export default function Record({ myTeamCode }) {
   const edit = (r) => {
     setEditId(r.id)
     setDate(r.gameDate)
-    setOpp(r.opponent?.code ?? '')
-    setGameHint('')
+    setGameId(r.game?.gameId ?? '')
     setCost({
       ticket: String(r.ticketCost || ''),
       move: String(r.transportCost || ''),
@@ -143,12 +149,20 @@ export default function Record({ myTeamCode }) {
     r.myScore != null && r.opponentScore != null
       ? `${r.myScore} : ${r.opponentScore}  ${r.opponent?.name ?? '-'}`
       : `vs ${r.opponent?.name ?? '-'}`
+  const gameText = (r) => {
+    if (!r.game) return matchText(r)
+    const t = (x) => x.name.split(' ')[0]
+    const { away, home } = r.game
+    return away.score != null && home.score != null
+      ? `${t(away)} ${away.score} : ${home.score} ${t(home)}`
+      : `${t(away)} vs ${t(home)}`
+  }
 
   return (
     <div className="grid-record">
       <section className="card form-card">
         <h3 className="lg">{editId ? '직관 기록 수정' : '오늘의 직관 남기기'}</h3>
-        <p className="muted small">날짜와 감상만 있으면 충분해요. 지출은 선택이에요.</p>
+        <p className="muted small">그 날 실제로 열린 경기 중에서 골라요. 지출은 선택이에요.</p>
 
         <div className="two-col gap">
           <div>
@@ -156,19 +170,30 @@ export default function Record({ myTeamCode }) {
             <input className="input" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
           </div>
           <div>
-            <label>경기 / 상대 팀</label>
-            <select className="input" value={opp} onChange={(e) => setOpp(e.target.value)}>
-              <option value="">{gameHint || '상대 팀 선택'}</option>
-              {teams
-                .filter((t) => t.code !== myTeamCode)
-                .map((t) => (
-                  <option key={t.code} value={t.code}>
-                    vs {t.name}
-                  </option>
-                ))}
+            <label>그 날의 경기 *</label>
+            <select
+              className="input"
+              value={gameId}
+              disabled={games.length === 0}
+              onChange={(e) => setGameId(e.target.value)}
+            >
+              <option value="">
+                {gamesLoading ? '경기를 불러오는 중…' : games.length ? '경기를 선택해주세요' : '경기가 없는 날이에요'}
+              </option>
+              {games.map((g) => (
+                <option key={g.gameId} value={g.gameId} disabled={g.status === 'CANCELED'}>
+                  {g.myTeam ? '★ ' : ''}
+                  {g.away.name} vs {g.home.name} · {g.stadium} {g.time} · {g.stageText ? g.stageText + ' · ' : ''}
+                  {g.statusText}
+                </option>
+              ))}
             </select>
           </div>
         </div>
+        {!gamesLoading && !gameErr && games.length === 0 && (
+          <p className="err-msg">이 날은 경기가 없어서 기록할 수 없어요. 경기가 있었던 날짜를 선택해주세요.</p>
+        )}
+        {gameErr && <p className="err-msg">{gameErr}</p>}
 
         <div className="cost-head">
           <h4>얼마나 쓰셨나요?</h4>
@@ -210,7 +235,7 @@ export default function Record({ myTeamCode }) {
               취소
             </button>
           )}
-          <button className="btn primary" onClick={submit}>
+          <button className="btn primary" onClick={submit} disabled={!gameId}>
             {editId ? '수정 저장 →' : '기록 확인 →'}
           </button>
         </div>
@@ -263,7 +288,7 @@ export default function Record({ myTeamCode }) {
         {records.map((r) => (
           <div key={r.id} className="past-row">
             <span className="pd">{shortDate(r.gameDate)}</span>
-            <b className="pm">{matchText(r)}</b>
+            <b className="pm">{gameText(r)}</b>
             <b className={'pr ' + (r.result === 'WIN' ? 'win' : 'lose')}>{resultText(r)}</b>
             <span className="pn muted small">{r.memo}</span>
             <b className="pc">{won(r.totalCost)}원</b>

@@ -76,24 +76,30 @@ export default function Login({ onLogin }) {
           <label>아이디</label>
           <input
             className="input"
-            placeholder="아이디를 입력해주세요"
+            maxLength={20}
+            placeholder="영문·숫자·밑줄(_) 4~20자"
             value={id}
             onChange={(e) => setId(e.target.value)}
           />
+          <p className="hint">영문, 숫자, 밑줄(_)만 사용 · 4~20자</p>
           <label>비밀번호</label>
           <input
             className="input"
             type="password"
-            placeholder="••••••••"
+            placeholder="8자 이상"
             value={pw}
             onChange={(e) => setPw(e.target.value)}
           />
+          <p className="hint">8자 이상</p>
           {err && <p className="err-msg">{err}</p>}
           <button className="btn primary lg" type="submit" disabled={busy}>
             로그인 →
           </button>
 
           <p className="muted small signup-q">아직 본전 클럽 회원이 아니신가요?</p>
+          <p className="hint signup-hint">
+            위에 사용할 아이디와 비밀번호를 입력한 뒤 <b>회원가입</b>을 누르세요. 가입 후 닉네임과 응원팀을 고르면 시작돼요.
+          </p>
           <button className="btn lg" type="button" disabled={busy} onClick={() => submit('signup')}>
             회원가입
           </button>

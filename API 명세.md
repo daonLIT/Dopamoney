@@ -121,23 +121,34 @@
 ### GET /api/records?limit=10
 "지난 직관 기록" 목록 (최신순).
 ```
-응답  200 [{"id": 7, "gameDate": "2026-11-13", "opponent": {"code": "LG", "name": "LG 트윈스"},
-            "result": "LOSE", "tag": "LOSE", "memo": "치킨은 맛있었다. 그거면 됐다.",
-            "ticketCost": 30000, "transportCost": 4000, "foodCost": 20000, "totalCost": 54000}]
+응답  200 [{"id": 7, "gameDate": "2026-11-03", "opponent": {"code": "SAM", "name": "삼성 라이온즈"},
+            "result": "WIN", "tag": "VERIFIED", "memo": "KS 1차전 직관!",
+            "ticketCost": 30000, "transportCost": 4000, "foodCost": 20000, "totalCost": 54000,
+            "myScore": 8, "opponentScore": 7,
+            "game": {"gameId": "20261103SSKT0",
+                     "away": {"code": "SAM", "name": "삼성 라이온즈", "score": 7},
+                     "home": {"code": "KT", "name": "KT 위즈", "score": 8}}}]
 ```
-- 목록 한 줄의 "한화 2 : 5 LG"는 `/api/schedule`로 점수를 붙이거나, 저장 시 `score`를 함께 보낸다 → **저장 시 서버가 스케줄 캐시에서 찾아 `myScore`/`opponentScore`를 채운다.** 못 찾으면 `null`.
+- `game`은 기록과 연결된 실제 경기(원정/홈, 점수는 종료 전이면 `null`). 목록 한 줄은 "삼성 7 : 8 KT"로 그린다.
+- `opponent`, `myScore`, `opponentScore`는 **내 응원팀이 뛴 경기일 때만** 채워진다(아니면 `null`).
 
 ### POST /api/records
+**그 날 실제로 열린 경기 중에서만 기록할 수 있다.** 프론트는 `GET /api/schedule?date=`의 `games` 중에서 고르게 하고, 그 경기의 `gameId`를 보낸다. 경기가 없는 날은 기록 자체가 불가능하다.
 ```
-요청  {"gameDate": "2026-11-14", "opponentCode": "LG",
+요청  {"gameDate": "2026-11-03", "gameId": "20261103SSKT0",
        "ticketCost": 30000, "transportCost": 4000, "foodCost": 20000,
        "memo": "9회 말까지 믿었던 나에게 한마디…", "tag": "REVERSE_LOSS"}
 응답  201 (GET /api/records 한 건과 같은 형태)
 오류  400 {"message": "경기 날짜와 감상은 필수예요"}
+      400 {"message": "경기를 선택해주세요"}              (gameId 없음)
+      400 {"message": "그 날 열린 경기가 아니에요"}        (그 날짜의 일정에 없는 gameId, 경기 없는 날 포함)
+      400 {"message": "취소된 경기는 기록할 수 없어요"}     (우천 취소 등)
+      502 {"message": "경기 일정을 불러오지 못했어요"}      (일정 조회 실패)
 ```
-- 필수: `gameDate`, `memo`. 비용 3개는 선택(없으면 0).
-- `tag`: `WIN`(승리) `LOSE`(패배) `REVERSE_LOSS`(역전패) `BIG_WIN`(대승) `VERIFIED`(직관 인증) 또는 `null`.
-- `result`(WIN/LOSE) 결정 순서: ① 스케줄 캐시의 경기 결과 ② 없으면 tag(WIN·BIG_WIN→WIN, LOSE·REVERSE_LOSS→LOSE) ③ 그래도 없으면 `null`(승패 집계 제외).
+- 필수: `gameDate`, `gameId`, `memo`. 비용 3개는 선택(없으면 0).
+- 서버가 `gameId`로 일정에서 경기를 찾아 원정·홈 팀과 점수를 기록에 저장한다.
+- `tag`: `WIN`(승리) `LOSE`(패배) `REVERSE_LOSS`(역전패) `BIG_WIN`(대승) `VERIFIED`(직관 인증) 또는 `null`. 기분을 남기는 용도이고 승패 판정에는 **실제 점수가 우선**한다.
+- `result`(WIN/LOSE) 결정: ① 내 응원팀 경기가 종료됐으면 실제 점수로(예: KT 8:7 → `WIN`, 태그가 LOSE여도 WIN) ② 그 외(내 팀 경기가 아니거나 경기 전)이면 tag(WIN·BIG_WIN→WIN, LOSE·REVERSE_LOSS→LOSE) ③ 그래도 없으면 `null`(승패 집계 제외).
 
 ### PUT /api/records/{id}
 요청/응답은 POST와 같다. 내 기록이 아니면 `404`.

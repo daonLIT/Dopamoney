@@ -29,7 +29,7 @@ public class RecordService {
 		this.schedule = schedule;
 	}
 
-	public record RecordReq(String gameDate, String opponentCode, Integer ticketCost, Integer transportCost,
+	public record RecordReq(String gameDate, String gameId, Integer ticketCost, Integer transportCost,
 			Integer foodCost, String memo, String tag) {}
 
 	// ---------- 계산 ----------
@@ -70,7 +70,16 @@ public class RecordService {
 				"opponent", opp == null ? null : M.of("code", opp.code, "name", opp.fullName),
 				"result", r.getResult(), "tag", r.getTag(), "memo", r.getMemo(),
 				"ticketCost", r.getTicketCost(), "transportCost", r.getTransportCost(), "foodCost", r.getFoodCost(),
-				"totalCost", r.totalCost(), "myScore", r.getMyScore(), "opponentScore", r.getOpponentScore());
+				"totalCost", r.totalCost(), "myScore", r.getMyScore(), "opponentScore", r.getOpponentScore(),
+				"game", gameView(r));
+	}
+
+	private static Map<String, Object> gameView(GameRecord r) {
+		if (r.getGameId() == null) return null;
+		Team a = Team.byCode(r.getAwayCode()), h = Team.byCode(r.getHomeCode());
+		return M.of("gameId", r.getGameId(),
+				"away", M.of("code", r.getAwayCode(), "name", a == null ? r.getAwayCode() : a.fullName, "score", r.getAwayScore()),
+				"home", M.of("code", r.getHomeCode(), "name", h == null ? r.getHomeCode() : h.fullName, "score", r.getHomeScore()));
 	}
 
 	// ---------- 조회 ----------
@@ -108,40 +117,42 @@ public class RecordService {
 		}
 		String tag = req.tag() == null || req.tag().isBlank() ? null : req.tag();
 		if (tag != null && !TAGS.contains(tag)) throw new ApiException(400, "태그가 올바르지 않아요");
-		String opp = req.opponentCode() == null || req.opponentCode().isBlank() ? null : req.opponentCode();
-		if (opp != null && Team.byCode(opp) == null) throw new ApiException(400, "상대 팀이 올바르지 않아요");
+		if (req.gameId() == null || req.gameId().isBlank()) throw new ApiException(400, "경기를 선택해주세요");
+		// 그 날 실제로 열린 경기인지 일정에서 확인 (일정을 못 불러오면 502)
+		Map<String, Object> game = schedule.gamesOfDay(date).stream()
+				.filter(g -> req.gameId().equals(g.get("gameId"))).findFirst()
+				.orElseThrow(() -> new ApiException(400, "그 날 열린 경기가 아니에요"));
+		if ("CANCELED".equals(game.get("status"))) throw new ApiException(400, "취소된 경기는 기록할 수 없어요");
+
+		String away = ScheduleService.code(game, "away"), home = ScheduleService.code(game, "home");
+		Integer as = scoreOrNull(game, "away"), hs = scoreOrNull(game, "home");
+		User u = users.findById(userId).orElse(null);
+		String myTeam = u == null ? null : u.getTeamCode();
+		boolean mine = myTeam != null && (myTeam.equals(away) || myTeam.equals(home));
 
 		r.setGameDate(date);
-		r.setOpponentCode(opp);
+		r.setGameId(req.gameId());
+		r.setAwayCode(away);
+		r.setHomeCode(home);
+		r.setAwayScore(as);
+		r.setHomeScore(hs);
+		r.setOpponentCode(mine ? (myTeam.equals(away) ? home : away) : null);
 		r.setTag(tag);
 		r.setMemo(req.memo().length() > 1000 ? req.memo().substring(0, 1000) : req.memo());
 		r.setTicketCost(cost(req.ticketCost()));
 		r.setTransportCost(cost(req.transportCost()));
 		r.setFoodCost(cost(req.foodCost()));
 
-		// 결과: 스케줄 캐시 -> tag -> null
+		// 결과: 내 팀 경기가 끝났으면 실제 점수로, 아니면 tag로 판단
 		r.setMyScore(null);
 		r.setOpponentScore(null);
 		String result = null;
-		User u = users.findById(userId).orElse(null);
-		String myTeam = u == null ? null : u.getTeamCode();
-		if (myTeam != null && opp != null) {
-			try {
-				for (Map<String, Object> g : schedule.gamesOfDay(date)) {
-					String a = ScheduleService.code(g, "away"), h = ScheduleService.code(g, "home");
-					boolean match = (a.equals(myTeam) && h.equals(opp)) || (h.equals(myTeam) && a.equals(opp));
-					if (!match || !"FINISHED".equals(g.get("status"))) continue;
-					int as = score(g, "away"), hs = score(g, "home");
-					int my = a.equals(myTeam) ? as : hs, other = a.equals(myTeam) ? hs : as;
-					r.setMyScore(my);
-					r.setOpponentScore(other);
-					if (my > other) result = "WIN";
-					else if (my < other) result = "LOSE";
-					break;
-				}
-			} catch (Exception e) {
-				// 스케줄을 못 불러오면 tag로 판단
-			}
+		if (mine && as != null && hs != null) {
+			int my = myTeam.equals(away) ? as : hs, other = myTeam.equals(away) ? hs : as;
+			r.setMyScore(my);
+			r.setOpponentScore(other);
+			if (my > other) result = "WIN";
+			else if (my < other) result = "LOSE";
 		}
 		if (result == null && r.getMyScore() == null && tag != null) {
 			result = switch (tag) {
@@ -155,8 +166,9 @@ public class RecordService {
 	}
 
 	@SuppressWarnings("unchecked")
-	private static int score(Map<String, Object> g, String side) {
-		return ((Number) ((Map<String, Object>) g.get(side)).get("score")).intValue();
+	private static Integer scoreOrNull(Map<String, Object> g, String side) {
+		Object v = ((Map<String, Object>) g.get(side)).get("score");
+		return v instanceof Number n ? n.intValue() : null;
 	}
 
 	private static int cost(Integer v) {
